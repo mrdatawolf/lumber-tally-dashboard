@@ -214,7 +214,7 @@ docker compose --env-file docker/.env -f docker/compose.yaml up -d
 Use an immutable image digest from a successful release workflow:
 
 ```dotenv
-DASHBOARD_IMAGE=ghcr.io/lolson3/lumber-tally-dashboard@sha256:<published-digest>
+DASHBOARD_IMAGE=ghcr.io/mrdatawolf/lumber-tally-dashboard@sha256:<published-digest>
 DEMO_MODE=false
 MILL_ID=<configured-profile>
 TALLY_API_BASE_URL=http://<private-api-host>:<port>

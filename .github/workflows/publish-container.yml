@@ -15,7 +15,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: lolson3/lumber-tally-dashboard
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   release-gate:
