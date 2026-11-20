@@ -1,14 +1,15 @@
 import { useEffect, useId, useState } from "react";
-import { dashboardSectionLabels, dashboardSections, type DashboardSection } from "../../constants/dashboard";
+import { dashboardSectionLabels, type DashboardSection } from "../../constants/dashboard";
 import { SidebarTree } from "./SidebarTree";
 import { currentMill } from "../../config/currentMill";
 
 interface SidebarProps {
+  sections: readonly DashboardSection[];
   activeSection: DashboardSection | null;
   onSelectSection: (section: DashboardSection) => void;
 }
 
-export function Sidebar({ activeSection, onSelectSection }: SidebarProps) {
+export function Sidebar({ sections, activeSection, onSelectSection }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
 
@@ -46,7 +47,7 @@ export function Sidebar({ activeSection, onSelectSection }: SidebarProps) {
         <span>Menu</span>
       </button>
       <nav id={menuId} className={menuOpen ? "menu-open" : ""} aria-label="Dashboard sections">
-        {dashboardSections.map((section) => (
+        {sections.map((section) => (
           <a className={`nav-link ${activeSection === section ? "active" : ""}`} href={`#${section}`} key={section} onClick={() => selectSection(section)}>
             {dashboardSectionLabels[section]}
           </a>

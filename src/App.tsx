@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tallyApi } from "./api/client";
+import { trimmerApi } from "./api/trimmer";
 import type { DateRange, GradeMixGrouping } from "./api/types";
 import { MixChart } from "./components/charts/MixChart";
 import { RejectReasons } from "./components/charts/RejectReasons";
@@ -11,12 +12,18 @@ import { MetricsOverview } from "./components/MetricsOverview";
 import { ProductionSummary } from "./components/production/ProductionSummary";
 import { ReportsPanel } from "./components/reports/ReportsPanel";
 import { Sidebar } from "./components/sidebar/Sidebar";
-import type { PlcOption } from "./constants/dashboard";
+import { TrimmerBreakdown } from "./components/trimmer/TrimmerBreakdown";
+import { TrimmerDaily } from "./components/trimmer/TrimmerDaily";
+import { TrimmerSpeedMix } from "./components/trimmer/TrimmerSpeedMix";
+import { sectionsForPlc, type PlcOption } from "./constants/dashboard";
 import { currentMill } from "./config/currentMill";
 import { useScrollSpy } from "./hooks/useScrollSpy";
 import { reportDetailQueryOptions, useReportDetailPrefetch } from "./hooks/useReportDetailPrefetch";
 import { buildBoardShapes, countReportDays, latestReportDate, mergeProductionRecovery, sumAdjustedRuntimeHours, sumNullable } from "./utils/dashboardData";
 import { defaultReportRange, formatReportDate, moneyFormatter, numberFormatter, previousProductionDaysRange } from "./utils/formatting";
+import { trimmerMetrics } from "./utils/trimmer";
+
+const allDates: DateRange = { start: "", end: "" };
 
 const initialReportRange: DateRange = currentMill.initialReportRange === "all"
   ? { start: "", end: "" }
@@ -32,15 +39,18 @@ export function App() {
   const [rawJsonOpen, setRawJsonOpen] = useState(false);
   const { activeSection, selectSection } = useScrollSpy();
   const invalidRange = Boolean(draftRange.start && draftRange.end && draftRange.start > draftRange.end);
+  const isTrimmer = selectedPlc === "Trimmer";
+  const isBoardEdger = !isTrimmer;
 
   useQuery({ queryKey: ["health"], queryFn: ({ signal }) => tallyApi.health(signal), refetchInterval: 60_000 });
-  const files = useQuery({ queryKey: ["files", selectedPlc, range], queryFn: ({ signal }) => tallyApi.files(range, signal) });
-  const availableFiles = useQuery({ queryKey: ["available-files", selectedPlc], queryFn: ({ signal }) => tallyApi.files({ start: "", end: "" }, signal) });
-  const production = useQuery({ queryKey: ["production-summary", selectedPlc, range], queryFn: ({ signal }) => tallyApi.productionSummary(range, signal) });
-  const recovery = useQuery({ queryKey: ["recovery", selectedPlc, range], queryFn: ({ signal }) => tallyApi.recovery(range, signal) });
-  const rejects = useQuery({ queryKey: ["reject-reason-totals", selectedPlc, range], queryFn: ({ signal }) => tallyApi.rejectReasonTotals(range, signal) });
+  const files = useQuery({ queryKey: ["files", selectedPlc, range], queryFn: ({ signal }) => tallyApi.files(range, signal), enabled: isBoardEdger });
+  const availableFiles = useQuery({ queryKey: ["available-files", selectedPlc], queryFn: ({ signal }) => tallyApi.files(allDates, signal), enabled: isBoardEdger });
+  const production = useQuery({ queryKey: ["production-summary", selectedPlc, range], queryFn: ({ signal }) => tallyApi.productionSummary(range, signal), enabled: isBoardEdger });
+  const recovery = useQuery({ queryKey: ["recovery", selectedPlc, range], queryFn: ({ signal }) => tallyApi.recovery(range, signal), enabled: isBoardEdger });
+  const rejects = useQuery({ queryKey: ["reject-reason-totals", selectedPlc, range], queryFn: ({ signal }) => tallyApi.rejectReasonTotals(range, signal), enabled: isBoardEdger });
   const gradeMix = useQuery({
     queryKey: ["grade-mixes", selectedPlc, range],
+    enabled: isBoardEdger,
     queryFn: async ({ signal }) => {
       const groupings: GradeMixGrouping[] = ["grade", "width", "thickness", "length_ft"];
       const entries = await Promise.all(groupings.map(async (grouping) =>
@@ -48,13 +58,16 @@ export function App() {
       return Object.fromEntries(entries) as Record<GradeMixGrouping, Awaited<ReturnType<typeof tallyApi.gradeMix>>>;
     },
   });
-  const boardDimensionMix = useQuery({ queryKey: ["board-dimension-mix", selectedPlc, range], queryFn: ({ signal }) => tallyApi.boardDimensionMix(range, signal) });
+  const boardDimensionMix = useQuery({ queryKey: ["board-dimension-mix", selectedPlc, range], queryFn: ({ signal }) => tallyApi.boardDimensionMix(range, signal), enabled: isBoardEdger });
+  const trimmerDays = useQuery({ queryKey: ["trimmer-days", range], queryFn: ({ signal }) => trimmerApi.days(range, signal), enabled: isTrimmer });
+  const trimmerAllDays = useQuery({ queryKey: ["trimmer-days", allDates], queryFn: ({ signal }) => trimmerApi.days(allDates, signal), enabled: isTrimmer });
+  const trimmerBreakdown = useQuery({ queryKey: ["trimmer-breakdown", range], queryFn: ({ signal }) => trimmerApi.breakdown(range, signal), enabled: isTrimmer });
   const fileDetail = useQuery({ ...reportDetailQueryOptions(selectedFileId ?? 0), enabled: selectedFileId !== null });
   const dashboardInitialLoadComplete = [production, recovery, rejects, gradeMix, boardDimensionMix]
     .every((query) => !query.isPending);
   useReportDetailPrefetch(availableFiles.data ?? [], dashboardInitialLoadComplete && availableFiles.isSuccess);
 
-  const metrics = useMemo(() => {
+  const edgerMetrics = useMemo(() => {
     const rows = production.data ?? [];
     const days = countReportDays(files.data ?? []);
     const runtimeHours = sumAdjustedRuntimeHours(rows.map((row) => row.time_run));
@@ -70,12 +83,20 @@ export function App() {
       { label: "Projected Lumber Value", value: moneyFormatter.format(sumNullable(rows.map((row) => row.lumber_value))) },
     ];
   }, [files.data, production.data]);
+  const trimmerDayRows = useMemo(() => trimmerDays.data ?? [], [trimmerDays.data]);
+  const metrics = useMemo(
+    () => isTrimmer ? trimmerMetrics(trimmerDayRows) : edgerMetrics,
+    [isTrimmer, trimmerDayRows, edgerMetrics],
+  );
   const productionRows = useMemo(() => mergeProductionRecovery(production.data ?? [], recovery.data ?? []), [production.data, recovery.data]);
   const boardShapes = useMemo(() => buildBoardShapes(boardDimensionMix.data ?? []), [boardDimensionMix.data]);
   const latestAvailableDate = useMemo(() => {
-    const date = latestReportDate(availableFiles.data ?? []);
+    const date = isTrimmer
+      ? trimmerAllDays.data?.at(-1)?.date ?? null
+      : latestReportDate(availableFiles.data ?? []);
     return date ? formatReportDate(date) : null;
-  }, [availableFiles.data]);
+  }, [isTrimmer, trimmerAllDays.data, availableFiles.data]);
+  const availability = isTrimmer ? trimmerAllDays : availableFiles;
 
   const applyRange = (event: FormEvent) => {
     event.preventDefault();
@@ -85,7 +106,6 @@ export function App() {
     }
   };
   const showAllDates = () => {
-    const allDates = { start: "", end: "" };
     setDraftRange(allDates);
     setRange(allDates);
     setSelectedFileId(null);
@@ -106,13 +126,17 @@ export function App() {
   };
 
   return <div className="app-shell">
-    <Sidebar activeSection={activeSection} onSelectSection={selectSection} />
+    <Sidebar sections={sectionsForPlc(selectedPlc)} activeSection={activeSection} onSelectSection={selectSection} />
     <div className="dashboard-surface">
       <DataSelectionHeader />
       <main>
-        <DataSelectionPanel draftRange={draftRange} range={range} selectedPlc={selectedPlc} invalidRange={invalidRange} latestAvailableDate={latestAvailableDate} availabilityPending={availableFiles.isPending} availabilityError={availableFiles.isError} onDraftRangeChange={setDraftRange} onPlcChange={selectPlc} onApply={applyRange} onAllDates={showAllDates} onPresetDays={showPresetDays} />
+        <DataSelectionPanel draftRange={draftRange} range={range} selectedPlc={selectedPlc} invalidRange={invalidRange} latestAvailableDate={latestAvailableDate} availabilityPending={availability.isPending} availabilityError={availability.isError} onDraftRangeChange={setDraftRange} onPlcChange={selectPlc} onApply={applyRange} onAllDates={showAllDates} onPresetDays={showPresetDays} />
         <MetricsOverview metrics={metrics} />
-        <div className="dashboard-grid">
+        {isTrimmer ? <div className="dashboard-grid">
+          <TrimmerDaily days={trimmerDayRows} isPending={trimmerDays.isPending} error={trimmerDays.error} onRetry={() => { void trimmerDays.refetch(); }} />
+          <TrimmerBreakdown breakdown={trimmerBreakdown.data} productionDates={trimmerDayRows.map((day) => day.date)} isPending={trimmerBreakdown.isPending} error={trimmerBreakdown.error} onRetry={() => { void trimmerBreakdown.refetch(); }} />
+          <TrimmerSpeedMix days={trimmerDayRows} isPending={trimmerDays.isPending} error={trimmerDays.error} onRetry={() => { void trimmerDays.refetch(); }} />
+        </div> : <div className="dashboard-grid">
           <ProductionSummary
             rows={productionRows}
             tablePending={production.isPending || recovery.isPending} tableError={production.error ?? recovery.error}
@@ -129,7 +153,7 @@ export function App() {
             detail={fileDetail.data} detailPending={fileDetail.isPending} detailError={fileDetail.error} onRetryDetail={() => { void fileDetail.refetch(); }}
             rawJsonOpen={rawJsonOpen} onToggleRawJson={() => setRawJsonOpen((open) => !open)}
           />
-        </div>
+        </div>}
       </main>
     </div>
   </div>;

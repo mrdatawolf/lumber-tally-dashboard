@@ -67,7 +67,7 @@ export const millProfiles: Record<MillId, MillProfile> = {
     },
     defaultPlc: "Board Edger",
     initialReportRange: "recent",
-    enabledPlcs: ["Board Edger"],
+    enabledPlcs: ["Board Edger", "Trimmer"],
     logo: sfpLogo,
     icons: sharedIcons,
     theme: { primary: "#dc5b08", primarySoft: "#ffe0cc", accent: "#f47700", metric: "#f47700", action: "#c84f00", focus: "#f47700", sidebarText: "#ffe1cc", themeColor: "#102a27", background: "#f4f0e6" },

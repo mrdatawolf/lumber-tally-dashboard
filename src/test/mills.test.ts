@@ -27,6 +27,13 @@ describe("mill configuration", () => {
     expect(getMillProfile("north-fork").initialReportRange).toBe("recent");
   });
 
+  it("enables the Trimmer only for Sequoia, the profile with a Trimmer feed", () => {
+    expect(getMillProfile("sequoia").enabledPlcs).toEqual(["Board Edger", "Trimmer"]);
+    expect(getMillProfile("north-fork").enabledPlcs).toEqual(["Board Edger"]);
+    expect(getMillProfile("agwood").enabledPlcs).toEqual(["Board Edger"]);
+    expect(getMillProfile("cascade").enabledPlcs).toEqual(["Board Edger"]);
+  });
+
   it("prefers validated container runtime settings over build-time defaults", async () => {
     window.__LUMBER_TALLY_CONFIG__ = {
       millId: "north-fork",

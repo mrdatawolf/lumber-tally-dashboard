@@ -113,10 +113,12 @@ function loadTableCounts(): Promise<Map<string, number>> {
   return entry.promise;
 }
 
-async function fetchTableRows<T>(table: string, startOffset: number, rowCount: number): Promise<T[]> {
+export type BronzeTableGroup = "tally" | "trimmer";
+
+async function fetchTableRows<T>(group: BronzeTableGroup, table: string, startOffset: number, rowCount: number): Promise<T[]> {
   if (startOffset >= rowCount) return [];
   const routeTable = currentMill.api.adapter === "nfl" ? table : table.replaceAll("_", "-");
-  const firstPage = await request<BronzePage<T>>(`/tally/${routeTable}?limit=${PAGE_LIMIT}&offset=${startOffset}`);
+  const firstPage = await request<BronzePage<T>>(`/${group}/${routeTable}?limit=${PAGE_LIMIT}&offset=${startOffset}`);
   if (!Array.isArray(firstPage.rows) || firstPage.rows.length === 0) throw new ResponseFormatError();
   const effectivePageSize = firstPage.rows.length;
   const remainingOffsets = Array.from(
@@ -124,7 +126,7 @@ async function fetchTableRows<T>(table: string, startOffset: number, rowCount: n
     (_, page) => startOffset + effectivePageSize * (page + 1),
   );
   const remainingPages = await Promise.all(remainingOffsets.map((offset) =>
-    request<BronzePage<T>>(`/tally/${routeTable}?limit=${PAGE_LIMIT}&offset=${offset}`),
+    request<BronzePage<T>>(`/${group}/${routeTable}?limit=${PAGE_LIMIT}&offset=${offset}`),
   ));
   const pages = [firstPage, ...remainingPages];
   if (pages.some((page) => !Array.isArray(page.rows))) throw new ResponseFormatError();
@@ -138,13 +140,13 @@ function normalizePayload<T>(payload: T): T {
   return { ...record, file_id: record.File_id } as T;
 }
 
-async function fetchTable<T>(table: string): Promise<T[]> {
+async function fetchTable<T>(group: BronzeTableGroup, table: string): Promise<T[]> {
   const counts = await loadTableCounts();
-  const tableName = `tally__${table}`;
+  const tableName = `${group}__${table}`;
   const rowCount = counts.get(tableName);
   if (typeof rowCount !== "number") throw new ResponseFormatError();
 
-  const rows = await fetchTableRows<T>(table, 0, rowCount);
+  const rows = await fetchTableRows<T>(group, table, 0, rowCount);
   if (rows.length !== rowCount) throw new ResponseFormatError();
   return rows;
 }
@@ -156,17 +158,23 @@ export function resetTallyApiCache() {
   tableCache.clear();
 }
 
-function loadTable<T>(table: string): Promise<T[]> {
-  const cached = tableCache.get(table);
+/** Loads every row of one bronze table, sharing in-flight requests and caching for one minute. */
+export function loadBronzeTable<T>(group: BronzeTableGroup, table: string): Promise<T[]> {
+  const cacheKey = `${group}__${table}`;
+  const cached = tableCache.get(cacheKey);
   if (cached && Date.now() - cached.loadedAt <= DATASET_TTL_MS) {
     return cached.promise as Promise<T[]>;
   }
-  const entry = { loadedAt: Date.now(), promise: fetchTable<T>(table) as Promise<unknown[]> };
-  tableCache.set(table, entry);
+  const entry = { loadedAt: Date.now(), promise: fetchTable<T>(group, table) as Promise<unknown[]> };
+  tableCache.set(cacheKey, entry);
   entry.promise.catch(() => {
-    if (tableCache.get(table) === entry) tableCache.delete(table);
+    if (tableCache.get(cacheKey) === entry) tableCache.delete(cacheKey);
   });
   return entry.promise as Promise<T[]>;
+}
+
+function loadTable<T>(table: string): Promise<T[]> {
+  return loadBronzeTable<T>("tally", table);
 }
 
 function fileIdsInRange(files: FilePayload[], range: DateRange): Set<number> {

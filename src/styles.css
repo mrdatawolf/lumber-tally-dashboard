@@ -287,3 +287,12 @@ pre { background: #fff0e3; border: 1px solid #f2d2bb; border-radius: 8px; color:
   .brand-mobile-name > span { animation: none; }
   .brand-mobile-name::after { display: none; }
 }
+
+/* Trimmer dashboard */
+.trimmer-daily-panel .table-scroll { max-height: 360px; }
+.trimmer-breakdown-panel .table-scroll { max-height: 460px; }
+.panel-note { color: var(--muted); font-size: .78rem; margin: 0; padding: 12px 24px 0; }
+.share-cell { align-items: center; display: flex; gap: 10px; min-width: 160px; }
+.share-bar { background: color-mix(in srgb, var(--amber) 14%, white); border-radius: 4px; flex: 1; height: 10px; overflow: hidden; }
+.share-bar > span { background: var(--amber); display: block; height: 100%; }
+.share-value { font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }

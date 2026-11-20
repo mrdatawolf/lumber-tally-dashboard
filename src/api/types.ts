@@ -91,3 +91,38 @@ export interface FileDetail extends FileOut {
     bd_ft: number;
   }>;
 }
+
+/** One production day on the Trimmer, combining every run that started that day. */
+export interface TrimmerDay {
+  date: string;
+  runs: number;
+  volume: number;
+  /** Derived from volume ÷ bd ft per piece for each run. */
+  pieces: number | null;
+  bfPerPiece: number | null;
+  downtimeSeconds: number;
+  totalStops: number;
+  lugFill: number | null;
+  trimLoss: number | null;
+  fastPct: number | null;
+  mediumPct: number | null;
+  slowPct: number | null;
+}
+
+export type TrimmerBreakdownSection = "product" | "width" | "grade" | "length";
+
+export interface TrimmerBreakdownRow {
+  section: TrimmerBreakdownSection;
+  label: string;
+  pieces: number;
+  volume: number;
+  pctVolume: number;
+}
+
+export interface TrimmerBreakdown {
+  /** Dates of the Production Summary reports included in the rows. */
+  reportDates: string[];
+  /** Earliest report with breakdown data across all dates, or null if none. */
+  firstAvailableDate: string | null;
+  rows: TrimmerBreakdownRow[];
+}
