@@ -14,6 +14,8 @@ import { ReportsPanel } from "./components/reports/ReportsPanel";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { TrimmerBreakdown } from "./components/trimmer/TrimmerBreakdown";
 import { TrimmerDaily } from "./components/trimmer/TrimmerDaily";
+import { TrimmerDowntime } from "./components/trimmer/TrimmerDowntime";
+import { TrimmerReports } from "./components/trimmer/TrimmerReports";
 import { TrimmerSpeedMix } from "./components/trimmer/TrimmerSpeedMix";
 import { sectionsForPlc, type PlcOption } from "./constants/dashboard";
 import { currentMill } from "./config/currentMill";
@@ -62,7 +64,14 @@ export function App() {
   const trimmerDays = useQuery({ queryKey: ["trimmer-days", range], queryFn: ({ signal }) => trimmerApi.days(range, signal), enabled: isTrimmer });
   const trimmerAllDays = useQuery({ queryKey: ["trimmer-days", allDates], queryFn: ({ signal }) => trimmerApi.days(allDates, signal), enabled: isTrimmer });
   const trimmerBreakdown = useQuery({ queryKey: ["trimmer-breakdown", range], queryFn: ({ signal }) => trimmerApi.breakdown(range, signal), enabled: isTrimmer });
-  const fileDetail = useQuery({ ...reportDetailQueryOptions(selectedFileId ?? 0), enabled: selectedFileId !== null });
+  const trimmerDowntime = useQuery({ queryKey: ["trimmer-downtime", range], queryFn: ({ signal }) => trimmerApi.downtime(range, signal), enabled: isTrimmer });
+  const trimmerReports = useQuery({ queryKey: ["trimmer-reports", range], queryFn: ({ signal }) => trimmerApi.reports(range, signal), enabled: isTrimmer });
+  const trimmerReportDetail = useQuery({
+    queryKey: ["trimmer-report", selectedFileId],
+    queryFn: ({ signal }) => trimmerApi.report(selectedFileId ?? 0, signal),
+    enabled: isTrimmer && selectedFileId !== null,
+  });
+  const fileDetail = useQuery({ ...reportDetailQueryOptions(selectedFileId ?? 0), enabled: isBoardEdger && selectedFileId !== null });
   const dashboardInitialLoadComplete = [production, recovery, rejects, gradeMix, boardDimensionMix]
     .every((query) => !query.isPending);
   useReportDetailPrefetch(availableFiles.data ?? [], dashboardInitialLoadComplete && availableFiles.isSuccess);
@@ -136,6 +145,13 @@ export function App() {
           <TrimmerDaily days={trimmerDayRows} isPending={trimmerDays.isPending} error={trimmerDays.error} onRetry={() => { void trimmerDays.refetch(); }} />
           <TrimmerBreakdown breakdown={trimmerBreakdown.data} productionDates={trimmerDayRows.map((day) => day.date)} isPending={trimmerBreakdown.isPending} error={trimmerBreakdown.error} onRetry={() => { void trimmerBreakdown.refetch(); }} />
           <TrimmerSpeedMix days={trimmerDayRows} isPending={trimmerDays.isPending} error={trimmerDays.error} onRetry={() => { void trimmerDays.refetch(); }} />
+          <TrimmerDowntime downtime={trimmerDowntime.data} productionDates={trimmerDayRows.map((day) => day.date)} isPending={trimmerDowntime.isPending} error={trimmerDowntime.error} onRetry={() => { void trimmerDowntime.refetch(); }} />
+          <TrimmerReports
+            reports={trimmerReports.data ?? []} reportsPending={trimmerReports.isPending} reportsError={trimmerReports.error} onRetryReports={() => { void trimmerReports.refetch(); }}
+            selectedId={selectedFileId} onSelect={setSelectedFileId} onBack={backToReports}
+            detail={trimmerReportDetail.data} detailPending={trimmerReportDetail.isPending} detailError={trimmerReportDetail.error} onRetryDetail={() => { void trimmerReportDetail.refetch(); }}
+            rawJsonOpen={rawJsonOpen} onToggleRawJson={() => setRawJsonOpen((open) => !open)}
+          />
         </div> : <div className="dashboard-grid">
           <ProductionSummary
             rows={productionRows}

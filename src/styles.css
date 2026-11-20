@@ -296,3 +296,17 @@ pre { background: #fff0e3; border: 1px solid #f2d2bb; border-radius: 8px; color:
 .share-bar { background: color-mix(in srgb, var(--amber) 14%, white); border-radius: 4px; flex: 1; height: 10px; overflow: hidden; }
 .share-bar > span { background: var(--amber); display: block; height: 100%; }
 .share-value { font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
+.trimmer-downtime-panel .table-scroll { max-height: 460px; }
+.downtime-summary { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); padding: 16px 24px 0; }
+.downtime-summary div { background: #f5f3ec; border-radius: 8px; display: grid; gap: 6px; padding: 12px 14px; }
+.downtime-summary span { color: var(--muted); font-size: .72rem; }
+.downtime-summary strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.panel-warning { background: #fdf3e7; border: 1px solid #ecc9a0; border-radius: 8px; color: #6b3d12; display: grid; font-size: .8rem; gap: 4px; margin: 12px 24px 4px; padding: 10px 14px; }
+.flagged-value { color: #8a4a0c; font-weight: 700; }
+.status-badge { border-radius: 999px; display: inline-block; font-size: .72rem; font-weight: 700; padding: 3px 9px; }
+.status-ok { background: #e3f1e6; color: #1f5b2e; }
+.status-empty { background: #f1ece8; color: #6a5d55; }
+.status-replaced { background: #fdf0dc; color: #7a4a0e; }
+.trimmer-report-detail h3 { font-size: .95rem; margin: 22px 0 10px; }
+.trimmer-report-detail .table-scroll { max-height: 320px; }
+.detail-note { padding: 10px 0 0; }

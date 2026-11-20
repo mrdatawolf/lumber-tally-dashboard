@@ -126,3 +126,66 @@ export interface TrimmerBreakdown {
   firstAvailableDate: string | null;
   rows: TrimmerBreakdownRow[];
 }
+
+export interface TrimmerDowntimeAlarm {
+  key: string;
+  alarmId: number | null;
+  description: string;
+  occurrences: number;
+  totalSeconds: number;
+  longestSeconds: number;
+  /** True when one stop lasted longer than its report's shift window. */
+  exceedsShift: boolean;
+}
+
+/** A single stop longer than the shift window of the report it came from. */
+export interface TrimmerLongStop {
+  date: string;
+  description: string;
+  seconds: number;
+  windowSeconds: number;
+}
+
+export interface TrimmerDowntime {
+  /** Dates of the Downtime Summary reports included in the totals. */
+  reportDates: string[];
+  firstAvailableDate: string | null;
+  totalSeconds: number;
+  totalStops: number;
+  alarms: TrimmerDowntimeAlarm[];
+  longStops: TrimmerLongStop[];
+}
+
+export type TrimmerReportStatus = "ok" | "empty" | "replaced";
+
+export interface TrimmerReport {
+  id: number;
+  date: string;
+  reportType: string;
+  typeLabel: string;
+  fileName: string | null;
+  reportStart: string | null;
+  reportEnd: string | null;
+  printedAt: string | null;
+  loadedAt: string | null;
+  recordCount: number | null;
+  status: TrimmerReportStatus;
+}
+
+export interface TrimmerKpi {
+  lugFill: number | null;
+  trimLoss: number | null;
+  avgBfPerPiece: number | null;
+  fastPct: number | null;
+  mediumPct: number | null;
+  slowPct: number | null;
+}
+
+export interface TrimmerReportDetail extends TrimmerReport {
+  kpi: TrimmerKpi | null;
+  breakdown: TrimmerBreakdownRow[];
+  downtime: TrimmerDowntime | null;
+  days: TrimmerDay[];
+  /** The bronze rows that make up this report, by table. */
+  raw: Record<string, unknown[]>;
+}

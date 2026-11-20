@@ -3,8 +3,13 @@ import { resetTallyApiCache } from "../../api/client";
 import {
   buildTrimmerBreakdown,
   buildTrimmerDays,
+  buildTrimmerDowntime,
+  buildTrimmerReportDetail,
+  buildTrimmerReports,
   durationSeconds,
   type TrimmerBreakdownPayload,
+  type TrimmerDowntimeAlarmPayload,
+  type TrimmerTables,
   type TrimmerFileLoadPayload,
   type TrimmerTodateDayPayload,
 } from "../../api/trimmer";
@@ -12,9 +17,18 @@ import { demoTrimmerTables } from "../../api/trimmerDemoData";
 
 const all = { start: "", end: "" };
 
-function load(id: number, report_type: string, printed_at: string, report_start: string | null = null): TrimmerFileLoadPayload {
-  return { id, report_type, printed_at, report_start, report_end: null };
+function load(id: number, report_type: string, printed_at: string, report_start: string | null = null, report_end: string | null = null): TrimmerFileLoadPayload {
+  return { id, report_type, printed_at, report_start, report_end, archived_file_id: id };
 }
+
+function alarm(id: number, file_load_id: number, alarm_id: number | null, description: string, occurrences: number, total_duration: string, max_duration: string): TrimmerDowntimeAlarmPayload {
+  return { id, file_load_id, alarm_id, description, occurrences, total_duration, max_duration };
+}
+
+const emptyTables: TrimmerTables = {
+  file_load: [], archived_file: [], production_todate_day: [], production_summary_kpi: [],
+  production_summary_breakdown: [], downtime_total: [], downtime_alarm: [],
+};
 
 function day(id: number, file_load_id: number, run_start: string, overrides: Partial<TrimmerTodateDayPayload> = {}): TrimmerTodateDayPayload {
   return {
@@ -131,12 +145,130 @@ describe("buildTrimmerBreakdown", () => {
     expect(result.firstAvailableDate).toBe("2026-11-09");
   });
 
+  it("merges labels that differ only by case, but not by punctuation", () => {
+    const result = buildTrimmerBreakdown({
+      file_load: fileLoad,
+      production_summary_breakdown: [
+        breakdownRow(1, 2, "product", "2x4 x HQ Gold", 10, 100),
+        breakdownRow(2, 8, "product", "2x4 x hq Gold", 30, 300),
+        breakdownRow(3, 8, "product", "2x4 .HQ Gold", 5, 50),
+      ],
+    }, all);
+
+    expect(result.rows.map((row) => [row.label, row.pieces, row.volume])).toEqual([
+      // The merged row shows the spelling with the most volume.
+      ["2x4 x hq Gold", 40, 400],
+      ["2x4 .HQ Gold", 5, 50],
+    ]);
+  });
+
   it("uses only the newest report when a date was loaded twice", () => {
     const result = buildTrimmerBreakdown({
       file_load: [...fileLoad, load(20, "production_summary", "2026-11-16 18:00:00", "2026-11-16 05:00:02")],
       production_summary_breakdown: [...breakdown, breakdownRow(9, 20, "product", "8 x Gold", 25, 125)],
     }, { start: "2026-11-16", end: "2026-11-16" });
     expect(result.rows.map((row) => [row.label, row.volume])).toEqual([["8 x Gold", 125]]);
+  });
+});
+
+describe("buildTrimmerDowntime", () => {
+  const tables = {
+    file_load: [
+      load(1, "downtime_summary", "2026-11-09 15:40:00", "2026-11-09 05:00:01", "2026-11-09 15:40:00"),
+      load(4, "downtime_summary", "2026-11-13 15:40:00", "2026-11-13 05:00:01", "2026-11-13 15:40:02"),
+      load(17, "downtime_summary", "2026-11-18 15:40:00", "2026-11-18 05:00:00", "2026-11-18 15:40:00"),
+    ],
+    downtime_total: [
+      { id: 1, file_load_id: 1, occurrences: 15, total_duration: "00:30:00" },
+      // 11/13 arrived empty.
+      { id: 2, file_load_id: 4, occurrences: 0, total_duration: null },
+      { id: 3, file_load_id: 17, occurrences: 80, total_duration: "24:10:00" },
+    ],
+    downtime_alarm: [
+      alarm(1, 1, 239, "Green Chain #2 Operator Stopped", 5, "00:10:00", "00:04:00"),
+      alarm(2, 1, 65, "Sorter Stop", 10, "00:20:00", "00:05:00"),
+      alarm(3, 17, 239, "Green Chain #2 Operator Stopped (renamed)", 70, "24:00:00", "23:59:57"),
+      alarm(4, 17, 65, "Sorter Stop", 10, "00:10:00", "00:02:00"),
+    ],
+  };
+
+  it("totals the newest reports, matches alarms by id and skips empty reports", () => {
+    const downtime = buildTrimmerDowntime(tables, all);
+
+    expect(downtime.reportDates).toEqual(["2026-11-09", "2026-11-18"]);
+    expect(downtime.firstAvailableDate).toBe("2026-11-09");
+    expect(downtime.totalStops).toBe(95);
+    expect(downtime.totalSeconds).toBe(30 * 60 + 24 * 3600 + 10 * 60);
+    expect(downtime.alarms.map((entry) => [entry.alarmId, entry.description, entry.occurrences, entry.totalSeconds])).toEqual([
+      // The newest description is shown.
+      [239, "Green Chain #2 Operator Stopped (renamed)", 75, 10 * 60 + 24 * 3600],
+      [65, "Sorter Stop", 20, 30 * 60],
+    ]);
+  });
+
+  it("flags stops longer than the report's shift window but keeps them as reported", () => {
+    const downtime = buildTrimmerDowntime(tables, all);
+    const flagged = downtime.alarms.find((entry) => entry.alarmId === 239);
+
+    expect(flagged).toMatchObject({ longestSeconds: 23 * 3600 + 59 * 60 + 57, exceedsShift: true });
+    expect(downtime.alarms.find((entry) => entry.alarmId === 65)?.exceedsShift).toBe(false);
+    expect(downtime.longStops).toEqual([{
+      date: "2026-11-18",
+      description: "Green Chain #2 Operator Stopped (renamed)",
+      seconds: 23 * 3600 + 59 * 60 + 57,
+      windowSeconds: 10 * 3600 + 40 * 60,
+    }]);
+  });
+
+  it("falls back to summing alarms when a report has no total row", () => {
+    const downtime = buildTrimmerDowntime({ ...tables, downtime_total: [] }, { start: "2026-11-09", end: "2026-11-09" });
+    expect(downtime.totalStops).toBe(15);
+    expect(downtime.totalSeconds).toBe(30 * 60);
+  });
+});
+
+describe("Trimmer reports", () => {
+  const tables: TrimmerTables = {
+    ...emptyTables,
+    file_load: [
+      load(2, "production_summary", "2026-11-09 15:40:00", "2026-11-09 05:00:01"),
+      load(5, "production_summary", "2026-11-13 15:40:00", "2026-11-13 05:00:01"),
+      load(6, "production_todate", "2026-11-13 15:40:00"),
+      load(7, "production_summary", "2026-11-09 18:00:00", "2026-11-09 05:00:01"),
+    ],
+    archived_file: [{ id: 2, archive_name: "2026-11-09_Production Summary.xls", original_name: "Production Summary.xls" }],
+    production_todate_day: [day(1, 6, "2026-11-12 05:00:00")],
+    production_summary_kpi: [{ id: 1, file_load_id: 7, lug_fill: 91, trimloss: 12.1, avg_bf_per_piece: 3.16, trimmer_speed_fast_pct: 65, trimmer_speed_medium_pct: 22, trimmer_speed_slow_pct: 13 }],
+    production_summary_breakdown: [
+      breakdownRow(1, 2, "product", "8 x Gold", 10, 40),
+      breakdownRow(2, 5, "product", "Total", 0, 0, 1),
+      breakdownRow(3, 7, "product", "8 x Gold", 12, 48),
+      breakdownRow(4, 7, "product", "Total", 12, 48, 1),
+    ],
+  };
+
+  it("lists loads newest date first, marking empty and replaced reports", () => {
+    const reports = buildTrimmerReports(tables, all);
+    expect(reports.map((report) => [report.id, report.date, report.typeLabel, report.status])).toEqual([
+      [5, "2026-11-13", "Production Summary", "empty"],
+      [6, "2026-11-13", "Production To-date", "ok"],
+      [7, "2026-11-09", "Production Summary", "ok"],
+      [2, "2026-11-09", "Production Summary", "replaced"],
+    ]);
+    expect(reports.find((report) => report.id === 2)?.fileName).toBe("2026-11-09_Production Summary.xls");
+  });
+
+  it("filters the list by report date", () => {
+    expect(buildTrimmerReports(tables, { start: "2026-11-10", end: "" }).map((report) => report.id)).toEqual([5, 6]);
+  });
+
+  it("builds a report's contents and raw rows", () => {
+    const detail = buildTrimmerReportDetail(tables, 7);
+    expect(detail?.kpi).toMatchObject({ lugFill: 91, trimLoss: 12.1, fastPct: 65 });
+    expect(detail?.breakdown.map((row) => row.label)).toEqual(["8 x Gold"]);
+    expect(Object.keys(detail?.raw ?? {})).toEqual(["file_load", "production_summary_kpi", "production_summary_breakdown"]);
+    expect(buildTrimmerReportDetail(tables, 6)?.days.map((entry) => entry.date)).toEqual(["2026-11-12"]);
+    expect(buildTrimmerReportDetail(tables, 999)).toBeNull();
   });
 });
 
@@ -149,6 +281,17 @@ describe("Trimmer demo data", () => {
     expect(breakdown.rows.some((row) => row.label === "Total")).toBe(false);
     const productShare = breakdown.rows.filter((row) => row.section === "product").reduce((sum, row) => sum + row.pctVolume, 0);
     expect(productShare).toBeCloseTo(100);
+  });
+
+  it("includes downtime reports whose alarms add up to each day's totals", () => {
+    const downtime = buildTrimmerDowntime(demoTrimmerTables, all);
+    const reports = buildTrimmerReports(demoTrimmerTables, all);
+    expect(downtime.reportDates).toHaveLength(14);
+    expect(downtime.alarms.reduce((sum, entry) => sum + entry.totalSeconds, 0)).toBe(downtime.totalSeconds);
+    expect(downtime.alarms.reduce((sum, entry) => sum + entry.occurrences, 0)).toBe(downtime.totalStops);
+    expect(downtime.longStops).toEqual([]);
+    expect(reports).toHaveLength(1 + 14 * 2);
+    expect(reports.every((report) => report.status === "ok" && report.fileName)).toBe(true);
   });
 });
 

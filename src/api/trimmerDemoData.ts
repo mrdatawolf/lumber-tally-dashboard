@@ -1,5 +1,8 @@
 import { runtimeFakeDataSeed } from "../config/runtimeConfig";
-import type { TrimmerBreakdownPayload, TrimmerFileLoadPayload, TrimmerTables, TrimmerTodateDayPayload } from "./trimmer";
+import type {
+  TrimmerArchivedFilePayload, TrimmerBreakdownPayload, TrimmerDowntimeAlarmPayload, TrimmerDowntimeTotalPayload,
+  TrimmerFileLoadPayload, TrimmerKpiPayload, TrimmerTables, TrimmerTodateDayPayload,
+} from "./trimmer";
 
 // Deterministic Trimmer demo data in the same shape as the bronze tables, so
 // demo mode exercises the same de-duplication and aggregation as production.
@@ -18,6 +21,11 @@ function random() {
 
 function between(min: number, max: number) {
   return min + random() * (max - min);
+}
+
+function durationSeconds(value: string | null) {
+  const [hours = 0, minutes = 0, seconds = 0] = (value ?? "").split(":").map(Number);
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
 function duration(seconds: number) {
@@ -45,14 +53,36 @@ const products = [
 ] as const;
 const lengths = [{ label: "4'", share: 0.12 }, { label: "5'", share: 0.4 }, { label: "6'", share: 0.22 }, { label: "8'", share: 0.26 }] as const;
 
-const todateLoadId = 1;
-const fileLoad: TrimmerFileLoadPayload[] = [{
-  id: todateLoadId,
-  report_type: "production_todate",
-  report_start: null,
-  report_end: null,
-  printed_at: `${lastDate} 15:40:00`,
-}];
+const alarms = [
+  { alarm_id: 201, description: "Lug Loader Jam", weight: 0.24 },
+  { alarm_id: 214, description: "Sorter Stop At Lug Loader Console", weight: 0.2 },
+  { alarm_id: 222, description: "Ready to Run", weight: 0.16 },
+  { alarm_id: 230, description: "Trimmer Saw Overload", weight: 0.12 },
+  { alarm_id: 237, description: "Green Chain Landing Table Full", weight: 0.11 },
+  { alarm_id: 239, description: "Green Chain Operator Stopped", weight: 0.1 },
+  { alarm_id: 245, description: "Too Many Slashes", weight: 0.07 },
+] as const;
+
+const fileLoad: TrimmerFileLoadPayload[] = [];
+const archivedFiles: TrimmerArchivedFilePayload[] = [];
+
+function addLoad(reportType: string, title: string, date: string, recordCount: number, shift: boolean) {
+  const id = fileLoad.length + 1;
+  archivedFiles.push({ id, archive_name: `${date}_${title}.xls`, original_name: `${title}.xls`, copy_date: date, archived_at: `${date} 16:05:00` });
+  fileLoad.push({
+    id,
+    report_type: reportType,
+    report_start: shift ? `${date} 05:00:00` : null,
+    report_end: shift ? `${date} 15:40:00` : null,
+    printed_at: `${date} 15:40:00`,
+    loaded_at: `${date} 16:05:00`,
+    record_count: recordCount,
+    archived_file_id: id,
+  });
+  return id;
+}
+
+const todateLoadId = addLoad("production_todate", "Production Todate", lastDate, dayCount, false);
 
 const todateDays: TrimmerTodateDayPayload[] = dates.map((date, index) => {
   const fast = Math.round(between(30, 75));
@@ -74,16 +104,48 @@ const todateDays: TrimmerTodateDayPayload[] = dates.map((date, index) => {
 });
 
 const breakdown: TrimmerBreakdownPayload[] = [];
+const kpis: TrimmerKpiPayload[] = [];
+const downtimeTotals: TrimmerDowntimeTotalPayload[] = [];
+const downtimeAlarms: TrimmerDowntimeAlarmPayload[] = [];
 for (const day of todateDays.slice(-breakdownDayCount)) {
   const date = day.run_start.slice(0, 10);
-  const loadId = fileLoad.length + 1;
-  fileLoad.push({
-    id: loadId,
-    report_type: "production_summary",
-    report_start: `${date} 05:00:00`,
-    report_end: `${date} 15:40:00`,
-    printed_at: `${date} 15:40:00`,
+  const loadId = addLoad("production_summary", "Production Summary", date, 23, true);
+  kpis.push({
+    id: kpis.length + 1,
+    file_load_id: loadId,
+    lug_fill: day.lug_fill,
+    trimloss: day.trimloss,
+    avg_bf_per_piece: day.bf_per_piece,
+    trimmer_speed_fast_pct: day.fast_pct,
+    trimmer_speed_medium_pct: day.medium_pct,
+    trimmer_speed_slow_pct: day.slow_pct,
   });
+
+  // The Downtime Summary splits the day's downtime and stops across alarms.
+  const downtimeLoadId = addLoad("downtime_summary", "Downtime Summary", date, alarms.length, true);
+  const downtime = durationSeconds(day.downtime);
+  const stops = day.total_stops ?? 0;
+  let allocatedSeconds = 0;
+  let allocatedStops = 0;
+  alarms.forEach((alarm, index) => {
+    const last = index === alarms.length - 1;
+    const seconds = last ? downtime - allocatedSeconds : Math.round(downtime * alarm.weight);
+    const occurrences = last ? stops - allocatedStops : Math.round(stops * alarm.weight);
+    allocatedSeconds += seconds;
+    allocatedStops += occurrences;
+    downtimeAlarms.push({
+      id: downtimeAlarms.length + 1,
+      file_load_id: downtimeLoadId,
+      alarm_id: alarm.alarm_id,
+      description: alarm.description,
+      occurrences,
+      total_duration: duration(seconds),
+      min_duration: "00:00:00",
+      max_duration: duration(Math.min(seconds, between(180, 1_200))),
+      row_order: index + 1,
+    });
+  });
+  downtimeTotals.push({ id: downtimeTotals.length + 1, file_load_id: downtimeLoadId, occurrences: stops, total_duration: day.downtime });
   const volume = day.volume ?? 0;
   const pieces = volume / (day.bf_per_piece ?? 3);
   const add = (section: string, label: string, share: number, isTotal = false) => breakdown.push({
@@ -113,6 +175,10 @@ for (const day of todateDays.slice(-breakdownDayCount)) {
 
 export const demoTrimmerTables: TrimmerTables = {
   file_load: fileLoad,
+  archived_file: archivedFiles,
   production_todate_day: todateDays,
+  production_summary_kpi: kpis,
   production_summary_breakdown: breakdown,
+  downtime_total: downtimeTotals,
+  downtime_alarm: downtimeAlarms,
 };

@@ -3,14 +3,14 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TrimmerBreakdown, TrimmerDay } from "../api/types";
+import type { TrimmerBreakdown, TrimmerDay, TrimmerDowntime, TrimmerReport } from "../api/types";
 import { App } from "../App";
 
 const api = vi.hoisted(() => ({
   health: vi.fn(), files: vi.fn(), file: vi.fn(), productionSummary: vi.fn(), recovery: vi.fn(),
   solutionTotals: vi.fn(), rejectReasonTotals: vi.fn(), gradeMix: vi.fn(), boardDimensionMix: vi.fn(),
 }));
-const trimmer = vi.hoisted(() => ({ days: vi.fn(), breakdown: vi.fn() }));
+const trimmer = vi.hoisted(() => ({ days: vi.fn(), breakdown: vi.fn(), downtime: vi.fn(), reports: vi.fn(), report: vi.fn() }));
 
 vi.mock("../api/client", () => ({ tallyApi: api }));
 vi.mock("../api/trimmer", async (importOriginal) => ({
@@ -37,6 +37,24 @@ const trimmerBreakdown: TrimmerBreakdown = {
   ],
 };
 
+const trimmerDowntime: TrimmerDowntime = {
+  reportDates: ["2026-11-18"],
+  firstAvailableDate: "2026-11-09",
+  totalSeconds: 94_444,
+  totalStops: 725,
+  alarms: [
+    { key: "id:239", alarmId: 239, description: "Green Chain #2 Operator Stopped", occurrences: 74, totalSeconds: 88_155, longestSeconds: 86_397, exceedsShift: true },
+    { key: "id:65", alarmId: 65, description: "Sorter Stop At Lug Loader Console", occurrences: 44, totalSeconds: 2_383, longestSeconds: 1_267, exceedsShift: false },
+  ],
+  longStops: [{ date: "2026-11-18", description: "Green Chain #2 Operator Stopped", seconds: 86_397, windowSeconds: 38_400 }],
+};
+const report: TrimmerReport = {
+  id: 17, date: "2026-11-18", reportType: "downtime_summary", typeLabel: "Downtime Summary",
+  fileName: "2026-11-19_Downtime Summary.xls", reportStart: "2026-11-18 05:00:00", reportEnd: "2026-11-18 15:40:00",
+  printedAt: "2026-11-18 15:40:00", loadedAt: "2026-11-19 10:55:32", recordCount: 19, status: "ok",
+};
+const emptyReport: TrimmerReport = { ...report, id: 4, date: "2026-11-13", fileName: "2026-11-13_Downtime Summary.xls", recordCount: 0, status: "empty" };
+
 function renderApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   return render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
@@ -53,6 +71,12 @@ beforeEach(() => {
   api.boardDimensionMix.mockResolvedValue([]);
   trimmer.days.mockResolvedValue(trimmerDays);
   trimmer.breakdown.mockResolvedValue(trimmerBreakdown);
+  trimmer.downtime.mockResolvedValue(trimmerDowntime);
+  trimmer.reports.mockResolvedValue([report, emptyReport]);
+  trimmer.report.mockResolvedValue({
+    ...report, kpi: null, breakdown: [], days: [], downtime: trimmerDowntime,
+    raw: { file_load: [{ id: 17, report_type: "downtime_summary" }] },
+  });
 });
 
 async function switchToTrimmer() {
@@ -96,8 +120,40 @@ describe("Trimmer dashboard", () => {
     expect(screen.getByLabelText("Trimmer speed mix by day stacked bar chart")).toBeInTheDocument();
 
     const nav = screen.getByRole("navigation", { name: "Dashboard sections" });
-    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Data Selection", "Production by Day", "Product Breakdown", "Speed Mix"]);
+    expect(within(nav).getAllByRole("link").map((link) => link.textContent)).toEqual(["Data Selection", "Production by Day", "Product Breakdown", "Speed Mix", "Downtime", "Reports"]);
     expect(screen.queryByRole("table", { name: "Production Summary" })).not.toBeInTheDocument();
+  });
+
+  it("shows downtime by alarm and points out stops longer than the shift", async () => {
+    const user = await switchToTrimmer();
+    const table = await screen.findByRole("table", { name: "Trimmer downtime by alarm" });
+    const rows = within(table).getAllByRole("row");
+
+    expect(within(screen.getByLabelText("Downtime totals")).getByText("26:14")).toBeInTheDocument();
+    expect(rows[1]).toHaveTextContent("Green Chain #2 Operator Stopped");
+    expect(rows[1]).toHaveTextContent("⚠ 23:59:57");
+    expect(screen.getByRole("note")).toHaveTextContent("longer than that report's 10:40 shift window");
+    expect(screen.getByText("1 production day has no Downtime Summary report.")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Sort downtime alarms by"), "stops");
+    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toContain("% of Stops");
+  });
+
+  it("lists Trimmer reports and opens one with its raw JSON", async () => {
+    const user = await switchToTrimmer();
+    const list = await screen.findByRole("table", { name: "Trimmer report files" });
+    expect(within(list).getByText("Empty")).toBeInTheDocument();
+    expect(within(list).getByText("2026-11-19_Downtime Summary.xls")).toBeInTheDocument();
+
+    await user.click(within(list).getByRole("button", { name: "View Downtime Summary report for 11/18/2026" }));
+    expect(trimmer.report).toHaveBeenCalledWith(17, expect.anything());
+    expect(await screen.findByRole("table", { name: "Report downtime alarms" })).toBeInTheDocument();
+    const rawJson = screen.getByRole("button", { name: /Raw report JSON/ });
+    await user.click(rawJson);
+    expect(rawJson).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(screen.getByRole("button", { name: "Back to reports" }));
+    expect(screen.getByRole("table", { name: "Trimmer report files" })).toBeInTheDocument();
   });
 
   it("explains when the range has no breakdown reports", async () => {

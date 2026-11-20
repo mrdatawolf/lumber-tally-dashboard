@@ -20,7 +20,7 @@ const dailyMetrics: Record<DailyMetric, { label: string; unit: string; format: (
   downtimeHours: { label: "Downtime", unit: "hours", format: (value) => formatDuration(value * 3600), axis: (value) => `${value}h` },
 };
 
-const columns: Array<Column<TrimmerDay>> = [
+export const trimmerDayColumns: Array<Column<TrimmerDay>> = [
   { key: "date", label: "Date", render: (day) => formatReportDate(day.date) },
   { key: "volume", label: "Volume (bd ft)", numeric: true, render: (day) => wholeNumberFormatter.format(day.volume) },
   { key: "pieces", label: "Pieces", numeric: true, render: (day) => day.pieces === null ? "—" : wholeNumberFormatter.format(day.pieces) },
@@ -64,7 +64,7 @@ export function TrimmerDaily({ days, isPending, error, onRetry }: Props) {
             <Bar dataKey="value" fill="var(--amber)" radius={[5, 5, 0, 0]} />
           </BarChart></ResponsiveContainer>
         </div>
-        <DataTable columns={columns} rows={tableRows} rowKey={(day) => day.date} caption="Trimmer production by day" emptyMessage="" />
+        <DataTable columns={trimmerDayColumns} rows={tableRows} rowKey={(day) => day.date} caption="Trimmer production by day" emptyMessage="" />
       </> : <p className="empty-state">No Trimmer production was reported for these dates.</p>}</QueryState>
     </Panel>
   </section>;

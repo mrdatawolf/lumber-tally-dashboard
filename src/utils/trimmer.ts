@@ -11,6 +11,13 @@ export function formatDuration(seconds: number) {
   return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
+/** Formats seconds as H:MM:SS, matching the Trimmer's own reports. */
+export function formatDurationExact(seconds: number) {
+  const whole = Math.max(0, Math.round(seconds));
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${Math.floor(whole / 3600)}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}`;
+}
+
 export function formatPercent(value: number | null) {
   return value === null ? "—" : `${percentFormatter.format(value)}%`;
 }
